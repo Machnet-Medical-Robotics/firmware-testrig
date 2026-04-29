@@ -1,50 +1,60 @@
-# layered architecture
+# LAYERED ARCHITECTURE (REFINED)
 
 ---
 
-## 1. TestRig MANAGER (planning layer to manage test runs)
+## 1. TESTRIG MANAGER (Planning Layer)
 
-Responsibilities:
+### Responsibilities
 
-- Single source of truth for what should be tested
-- Ensures correct firmware version is selected
+* Source of truth for test intent
+* Queue + prioritisation
+* TestRun validation
+* Firmware resolution
+* Global scheduling trigger
 
-Tasks:
+### Lifecycle
 
-* CSV ingestion (testrun request validation)
-* Queue + priority
-* Assign test runs to board-pairs
-* Global scheduling decisions
-* Dispatch to controller
-* Result aggregation (final report handling)
-* Output channel (report export)
+```text
+IDLE → INGESTING → VALIDATING → QUEUED → DISPATCHED → COMPLETED
+```
 
-Core Functions:
+### Inputs / Outputs
 
-- ingest_csv_test_run()
-- validate_test_run_schema()
-- enqueue_test_run()
-- prioritise_queue()
-- resolve_git_commit(board_id, version_rule)
-- dispatch_to_controller(test_run_id)
-- receive_final_report()
-- export_report()
+#### Input
+
+* CSV / API request
+
+#### Output
+
+* `TestRun` object → Controller
+
+### IPC
+
+* Internal Python call or lightweight DTO (no gRPC needed)
+
+### Language
+
+* Python
 
 ---
 
-## 2. TEST RUN CONTROLLER (execution orchestrator)
+## 2. TEST RUN CONTROLLER (Orchestrator)
 
-Responsibilities:
+### Responsibilities
 
-- Turns abstract test plan into execution
-- Maintains execution state machine
+* Split TestRun by:
 
-Responsibilities:
+  * BoardPair
+  * ESP32 Config groups
+* Control ESP32 configuration lifecycle
+* Control robot reboot lifecycle
+* Spawn Worker per (BoardPair + ConfigGroup)
+* Aggregate results
+* Enforce scheduling + ordering
 
 * Assign test runs to available board-pairs
 * Pull firmware hash + Execute robot firmware flashing
 * Testset orchestration
-* Testcase orchestration
 * Ensure:
   * per-board sequential execution
   * cross-board parallel execution
@@ -52,87 +62,179 @@ Responsibilities:
 * Execute state machine per board-pair
   * Call Board Configurator per testset
 * Handle retry policies per test run (NOT hardware error interpretation)
-* Coordinate with Test Service (Calls TestRig Service API)
-  * Step-by-step execution state machine
+* Coordinate with Test Worker (Calls TestRig Service API)
 * Aggregate results per:
   * testcase
   * testset
   * testrun
 
-Core Functions:
+### Core Functions
 
-- execute_test_run(test_run)
-- sort_by_board_id()
-- load_testset(testset_id)
-- load_testcase(testcase_id)
-- flash_board(commit_hash)
-- execute_testset_loop()
-- execute_testcase_loop()
-- call_test_service(script_line)
-- aggregate_test_results()
-- generate_test_report()
+```python
+ingest_test_run()
+group_by_board_and_config()
+acquire_esp32_lock()
+apply_esp32_config()
+trigger_robot_reboot()
+wait_for_board_ready()
+spawn_worker()
+collect_worker_result()
+aggregate_results()
+```
+
+### Lifecycle
 
 States: (execution State Machine)
+
+```text
 PENDING
-QUEUED
-FLASHING
-RUNNING_TESTSET
-RUNNING_TESTCASE
-WAITING_HARDWARE
-FAILED
-COMPLETED
+→ QUEUED
+→ GROUPING (by board + config)
+→ CONFIGURING (ESP32)
+→ REBOOTING (robot PCB)
+→ WAITING_READY
+→ SPAWNING_WORKER
+→ WAITING_WORKER
+→ AGGREGATING
+→ COMPLETED | FAILED
+```
 
-### Take note:
+### IPC
 
-* Robot firmware failure = **valid test result**, NOT system failure
+#### Controller → Worker
+
+* subprocess (stdin/stdout or file/socket)
+
+#### Controller → Hardware Daemon
+
+* via Worker ONLY (controller does NOT talk to hardware directly)
+
+### Language
+
+* Python
 
 ---
 
-## 3. TEST SERVICE (hardware execution platform, stateless execution engine)
+## 3. TEST WORKER RUNTIME (Execution Unit)
 
-Responsibilities:
+> NOT a service/daemon
+> NOT long-running
+> Spawned per (BoardPair + ConfigGroup)
 
-- Isolate all hardware complexity
-- Provide unified “test execution API”
 
-Tasks:
+### Responsibilities
 
-* API layer (Request validation)
-* Service orchestration layer (execution engine)
-* hardware/PCB abstraction layer
+* PCB readiness check
+* Execute TestSets sequentially
+* Interpret TestCases (DSL execution engine)
+* Coordinate command/check from each hardware
+* Perform step-level control
+* Call hardware daemon via gRPC
+* Evaluate results
+
+### Lifecycle
+
+```text
+INIT
+→ CONNECTING_TO_DAEMON
+→ WAITING_FOR_READY_CONFIRMATION
+→ RUNNING_TESTSETS
+→ RUNNING_TESTCASES
+→ EXECUTING_STEP
+→ COLLECTING_RESULTS
+→ COMPLETED | FAILED
+→ EXIT
+```
+
+### Input
+
+```json
+{
+  "board_pair_id": "...",
+  "config_id": "...",
+  "firmware": "...",
+  "testsets": [...]
+}
+```
+
+### Output
+
+```json
+{
+  "status": "COMPLETED",
+  "results": [...]
+}
+```
+
+### IPC
+
+#### Worker ↔ Hardware Daemon
+
+* **gRPC**
+
+  * Unary → commands
+  * Streaming → telemetry
+
+## Language
+
+* Python
+
+---
+
+## 4. HARDWARE DAEMON (C++)
+
+> ✔ Single source of truth for ALL hardware
+> ✔ Persistent process
+> ✔ Stateless execution engine (logic-free)
+
+### Responsibilities
+
+* Manage ALL physical interfaces:
+
   * UART (robot PCB)
-  * UART (monitoring PCB)
+  * UART (monitor PCB)
   * Future: camera, TCP, PSU control, oscilloscope
-* protocol(Handshake)/transport layer
-* Device (communication hardware) drivers / adapters
-* Command/response execution engine
+* Handle reconnect after reboot
+* Provide unified API for:
 
-Core Functions:
+  * command execution
+  * telemetry streaming
+  * readiness detection
 
-- API layer:
-    - validate_test_script()
-    - execute_test_request()
-- Service layer:
-    - coordinate_command_and_monitoring()
-    - manage_execution_context()
-- Hardware abstraction layer:
-    - uart_robot_send/receive
-    - uart_monitor_send/receive
-    - camera_capture() (future)
-    - tcp_robot_interface() (future)
-    - psu_control() (future)
-    - oscilloscope_read() (future)
-- Communication layer:
-protocol framing
-retries / acknowledgements
-timeouts
-handshake/init sequences
+### Lifecycle
 
-**plugin-driven hardware runtime**
+```text
+INIT
+→ DEVICE_DISCOVERY
+→ IDLE
+→ ACTIVE (handling requests)
+→ ERROR_RECOVERY
+→ IDLE
+```
+
+### IPC
+
+#### Exposed API
+
+* gRPC server
+
+#### Methods
+
+```proto
+SendCommand(device_id, command)
+ReadChannel(device_id, channel)
+StreamTelemetry(device_id)
+WaitForCondition(...)
+CheckDeviceReady(device_id)
+```
+
+## Language
+
+* C++
 
 ---
 
-### 4. TestRig MONITORING (Monitoring + Systems Supervision service)
+## 5. TestRig MONITORING (Monitoring + Systems Supervision service)
 
 Responsibilities:
 
@@ -155,9 +257,6 @@ Tasks:
 * queue status
 * per-board status
 
-
-
-
 Core Functions:
 
 - get_queue_status()
@@ -167,9 +266,43 @@ Core Functions:
 - detect_controller_failures()
 - heartbeat_monitoring()
 
+Language and Framework: 
+- Python
+
+IPC protocol:
+- gRPC stream to TEST RUN CONTROLLER
+
+### Take note:
+
+* 1 service instance per board-pair
+
+# 6. MONITORING SERVICE (refined)
+
+## Responsibilities
+
+* System health (NOT test logic)
+* Metrics
+* Logs
+* Worker lifecycle tracking
+
 ---
 
-### 5. TestRig SHARED
+## Lifecycle
+
+```text
+INIT → MONITORING → ALERTING → IDLE
+```
+
+---
+
+## IPC
+
+* gRPC or metrics endpoint
+
+
+---
+
+## 6. TestRig SHARED
 
 * TestRun schema (CSV + internal model)
 * Testset definition schema
@@ -182,181 +315,197 @@ Core Functions:
 * statuses
 * board config definitions
 
+
+# CRITICAL PROTOCOLS (DEFINED)
+
 ---
 
+## 1. Board Readiness Detection Protocol
 
+### Purpose
 
-## 3. BOARD MODEL (VERY IMPORTANT CHANGE)
+Ensure robot PCB is **fully ready after reboot**
+
+---
+
+### Trigger
+
+After:
+
+* ESP32 config applied
+* Robot PCB rebooted
+
+---
+
+### Mechanisms (use at least 2)
+
+#### 1. UART Boot Signature
+
+* Wait for known string:
 
 ```
-3 Robot Boards + 3 Monitoring Boards
-= 3 independent execution lanes
+"BOOT_COMPLETE"
 ```
 
-Define:
+---
 
-### Board Pair = Execution Unit
+#### 2. Heartbeat Message
+
+* Periodic message:
 
 ```
-BoardPair {
-    robot_board_id
-    monitor_board_id
-    config_profile
-    state
+HB:<timestamp>
+```
+
+---
+
+#### 3. Active Probe (gRPC call)
+
+```proto
+CheckDeviceReady(device_id)
+```
+
+Returns:
+
+```json
+{ "ready": true }
+```
+
+### Final Rule
+
+```text
+READY = boot message received AND heartbeat stable for N cycles
+```
+
+### Timeout Handling
+
+* timeout → mark test as FAILED (not system error)
+
+---
+
+## 2. ESP32 Configuration Protocol
+
+### Purpose
+
+Set DIP switches via ESP32
+
+### Flow
+
+```text
+Controller:
+  acquire lock
+  send config → ESP32
+  wait ACK
+  release lock
+```
+
+### Requirements
+
+* Must be **serialized**
+* Must return:
+
+```json
+{ "status": "CONFIG_APPLIED" }
+```
+
+---
+
+## 3. Robot Reboot Protocol
+
+### Trigger
+
+After ESP32 config change
+
+### Methods
+
+* Power cycle (preferred)
+* Reset pin
+* Software reboot command
+
+### Followed by:
+
+→ Board Readiness Protocol
+
+---
+
+## 4. Step Execution Protocol
+
+### Worker → Hardware Daemon
+
+#### Example:
+
+```json
+{
+  "type": "channel_wait_until",
+  "device": "robot_pcb",
+  "channel": "encoder",
+  "min": 25,
+  "max": 250,
+  "timeout": 60000
 }
 ```
 
-### Rules - Scheduling Domain Model
-
-* Each BoardPair runs **independently (parallel allowed)**
-* Each BoardPair executes:
-
-  * sequential testsets only
-* Testsets requiring config must match BoardPair config
-* No cross-board interference
-
-
----
-
-# 4. DEPLOYMENT DIAGRAM
-
-### Single Linux Controller Machine
-
-```
-┌──────────────────────────────────────────────┐
-│              APP MANAGEMENT DAEMON          │
-│  - watchdog                                 │
-│  - restart services                         │
-│  - health registry                          │
-│  - system error list                        │
-└──────────────┬─────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────┐
-│            TEST RUN MANAGER                  │
-│  queue + CSV + firmware selection           │
-└──────────────┬─────────────────────────────┘
-               │ dispatch test runs
-               ▼
-┌──────────────────────────────────────────────┐
-│          TEST RUN CONTROLLER                 │
-│  ┌───────────────┐  ┌───────────────┐       │
-│  │ Board Pair 1  │  │ Board Pair 2  │ ...   │
-│  │ sequential    │  │ sequential    │       │
-│  └──────┬────────┘  └──────┬────────┘       │
-│         │                  │                 │
-│         ▼                  ▼                 │
-│     TEST SERVICE        TEST SERVICE        │
-│   (instance per         (instance per       │
-│    board pair OR         board pair OR      │
-│    shared pool)          shared pool)        │
-└──────────────┬─────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────┐
-│             HARDWARE LAYER                  │
-│  UART Robot Boards (x3)                     │
-│  UART Monitor Boards (x3)                   │
-└──────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────┐
-│            MONITORING SERVICE                │
-│ logs + metrics + dashboards                 │
-└──────────────────────────────────────────────┘
-```
-
----
-
-## App Management hooks into ALL services
-
-```
-App Management
-   ↓
-systemd-like control
-   ↓
-health checks:
-   - controller alive?
-   - test service responsive?
-   - stuck executions?
-```
-
----
-
-
-
-# 6. TEST SERVICE PLUGIN ARCHITECTURE (CRITICAL DESIGN)
-
----
-
-## Core idea: Hardware = plugins
-
-Instead of hardcoding UART/camera/etc:
-
-### Base interface
-
-```python
-class HardwarePlugin:
-    def init(self, config): pass
-    def execute(self, command): pass
-    def health(self): pass
-    def reset(self): pass
-```
-
----
-
-## Plugin categories
-
-### 1. Communication plugins
-
-* UARTRobotPlugin
-* UARTMonitorPlugin
-* TCPRobotPlugin (future)
-
----
-
-### 2. Measurement plugins
-
-* OscilloscopePlugin
-* PSUControlPlugin
-* SensorArrayPlugin (future)
-
----
-
-### 3. Observation plugins
-
-* CameraPlugin (future)
-* VisionInspectionPlugin
-
----
-
-## Plugin registry system
-
-```
-Test Service Core
-    ↓
-Plugin Registry
-    ↓
-Dynamic loader (based on config)
-    ↓
-Active hardware adapters
-```
-
----
-
 ## Execution model
 
-Test Service does NOT know hardware specifics.
+* Worker sends request
+* Daemon performs loop internally
+* Returns result
 
-Instead:
+---
 
-```
-Testcase → Abstract command
-        ↓
-Service layer maps to plugin
-        ↓
-Plugin executes hardware call
-        ↓
-Response normalized
+## Inter-Process Communication Summary
+
+| From       | To         | Protocol   | Reason                    |
+| ---------- | ---------- | ---------- | ------------------------- |
+| Manager    | Controller | Python DTO | simple                    |
+| Controller | Worker     | subprocess | lifecycle control         |
+| Worker     | Hardware   | gRPC       | strong typing + streaming |
+| Monitoring | All        | gRPC       | observability             |
+
+---
+
+
+# 7. BOARD MODEL (finalized)
+
+```json
+{
+  "board_pair_id": "pair_1",
+  "robot_board_id": "R1",
+  "monitor_board_id": "M1",
+  "current_config": "config_X",
+  "state": "IDLE | RUNNING | WAITING_CONFIG"
+}
 ```
 
 ---
+
+# 8. DEPLOYMENT MODEL (corrected)
+
+```text
+Controller Machine
+├── TestRun Manager (Python)
+├── TestRun Controller (Python)
+├── Monitoring Service (Python)
+├── Hardware Daemon (C++)
+└── Workers (spawned dynamically, Python)
+```
+
+# SYSTEM FLOW
+
+```text
+1. Manager → create TestRun
+2. Controller:
+      group by (board_pair, config)
+3. FOR each group:
+      configure ESP32
+      reboot board
+      wait ready
+      spawn worker
+4. Worker:
+      execute testsets → testcases → steps
+5. Hardware daemon:
+      execute commands
+6. Worker returns results
+7. Controller aggregates
+8. Manager exports report
+```

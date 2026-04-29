@@ -1,0 +1,99 @@
+# =========================
+# General
+# =========================
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*.bak
+
+# =========================
+# Build artifacts (C/C++ / Embedded)
+# =========================
+build/
+bin/
+obj/
+out/
+*.o
+*.elf
+*.map
+*.hex
+*.bin
+*.d
+*.a
+*.so
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# STM32 / CubeIDE / Keil / IAR
+*.uvprojx
+*.uvoptx
+*.ewp
+*.eww
+*.ewd
+*.dep
+*.lst
+*.axf
+*.crf
+*.htm
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+build/
+components/*/build/
+
+# =========================
+# Python service
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+ENV/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# =========================
+# IDEs / Editors
+# =========================
+.vscode/
+.idea/
+*.code-workspace
+
+# =========================
+# Git & OS noise
+# =========================
+*.orig
+*.rej
+
+# =========================
+# Custom ignores (your request)
+# =========================
+
+# Ignore 'reference' folder and everything inside
+reference/
+
+# Ignore 'implementation guide' folder and everything inside
+implementation guide/
+
+# Also handle possible variations with spaces (safe pattern)
+**/reference/**
+**/implementation guide/**

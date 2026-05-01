@@ -1,4 +1,4 @@
-# LAYERED ARCHITECTURE (REFINED)
+# LAYERED ARCHITECTURE
 
 ---
 
@@ -236,7 +236,7 @@ CheckDeviceReady(device_id)
 
 ## 5. TestRig MONITORING (Monitoring + Systems Supervision service)
 
-Responsibilities:
+### Responsibilities
 
 **App Management Daemon** Potentially split to another daemon
 * Ensure all daemons are running
@@ -249,8 +249,7 @@ Responsibilities:
 * Expose system-wide state
 Must not affect test execution
 
-Tasks:
-
+* System health (NOT test logic)
 * system metrics
 * logs
 * test running status
@@ -266,39 +265,25 @@ Core Functions:
 - detect_controller_failures()
 - heartbeat_monitoring()
 
-Language and Framework: 
-- Python
-
-IPC protocol:
-- gRPC stream to TEST RUN CONTROLLER
-
-### Take note:
-
-* 1 service instance per board-pair
-
-# 6. MONITORING SERVICE (refined)
-
-## Responsibilities
-
-* System health (NOT test logic)
-* Metrics
-* Logs
-* Worker lifecycle tracking
-
----
-
-## Lifecycle
+### Lifecycle
 
 ```text
 INIT → MONITORING → ALERTING → IDLE
 ```
 
----
-
-## IPC
+### IPC
 
 * gRPC or metrics endpoint
 
+### Language
+
+* C++
+
+---
+
+### Take note:
+
+* 1 service instance per board-pair
 
 ---
 
@@ -371,7 +356,7 @@ Returns:
 { "ready": true }
 ```
 
-### Final Rule
+### State Rule
 
 ```text
 READY = boot message received AND heartbeat stable for N cycles
@@ -383,7 +368,9 @@ READY = boot message received AND heartbeat stable for N cycles
 
 ---
 
-## 2. ESP32 Configuration Protocol
+# For reference
+
+## 1. ESP32 Configuration Protocol
 
 ### Purpose
 
@@ -410,7 +397,7 @@ Controller:
 
 ---
 
-## 3. Robot Reboot Protocol
+## 2. Robot Reboot Protocol
 
 ### Trigger
 
@@ -428,7 +415,7 @@ After ESP32 config change
 
 ---
 
-## 4. Step Execution Protocol
+## 3. Step Execution Protocol
 
 ### Worker → Hardware Daemon
 
@@ -465,7 +452,7 @@ After ESP32 config change
 ---
 
 
-# 7. BOARD MODEL (finalized)
+# 4. BOARD MODEL
 
 ```json
 {
@@ -479,15 +466,86 @@ After ESP32 config change
 
 ---
 
-# 8. DEPLOYMENT MODEL (corrected)
+# 5. DEPLOYMENT MODEL
 
 ```text
-Controller Machine
+Controller Machine Overview
 ├── TestRun Manager (Python)
 ├── TestRun Controller (Python)
 ├── Monitoring Service (Python)
 ├── Hardware Daemon (C++)
 └── Workers (spawned dynamically, Python)
+```
+
+```
+┌──────────────────────────────────────────────┐
+│          APP MANAGEMENT DAEMON               │
+│  - watchdog / restart                        │
+│  - health registry                           │
+│  - system error tracking                     │
+└──────────────┬───────────────────────────────┘
+               │ supervises
+               ▼
+┌──────────────────────────────────────────────┐
+│            TEST RUN MANAGER                  │
+│  - CSV / API ingestion                       │
+│  - queue + priority                          │
+│  - firmware resolution                       │
+│  - dispatch test runs                        │
+└──────────────┬───────────────────────────────┘
+               │ sends TestRun
+               ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                            TEST RUN CONTROLLER                                   │
+│                    - group testset by (board_pair + config)                      │
+│                    - ESP32 config orchestration                                  │
+│                    - robot reboot coordination                                   │
+│                    - worker lifecycle management                                 │
+│                    - result aggregation                                          │
+│                                                                                  │
+│                     ┌──────────────────────────────────────┐                     │
+│                     │ Execution Pipeline (per board pair)  │                     │
+│                     │--------------------------------------│                     │
+│                     │ [Config Phase]                       │                     │
+│                     │  ESP32 → set DIP config              │                     │
+│                     │  Robot PCB → reboot                  │                     │
+│                     │  Wait → board ready                  │                     │
+│                     │                                      │                     │
+│                     │ [Execution Phase]                    │                     │
+│                     │  spawn Worker                        │                     │
+│                     │  execute testsets                    │                     │
+│                     │  collect results                     │                     │
+│                     └──────────────────────────────────────┘                     │
+└──────────────┬─────────────────────────────────────────────────┬─────────────────┘
+               │ spawns subprocess (1/board_pair)                │
+               ▼                                                 ▼
+┌───────────────────────────────────────────┐  ┌───────────────────────────────────┐
+│    WORKER RUNTIME (per config phase)      │  │        PHYSICAL HARDWARE          │
+│  - short-lived subprocess                 │  │  - Robot PCBs (x3)                │
+│  - executes testsets sequentially         │  │  - Monitoring PCBs (x3)           │
+│  - interprets testcases (step engine)     │  │  - ESP32 (DIP switch controller)  │
+│  - evaluates results                      │  └───────────────────────────────────┘
+│  - NO hardware logic                      │ 
+└──────────────┬────────────────────────────┘ 
+               │ gRPC (req/res + streaming)
+               ▼
+┌───────────────────────────────────────────┐
+│         HARDWARE DAEMON (C++)             │
+│  - UART robot PCB (x3)                    │
+│  - UART monitoring PCB (x3)               │
+│  - device abstraction                     │
+│  - reconnect after reboot                 │
+│  - readiness detection                    │
+│  - command execution engine               │
+└───────────────────────────────────────────┘
+
+┌───────────────────────────────────────────┐
+│       MONITORING SERVICE (GO/C++)         │
+│  - system metrics (CPU/memory)            │
+│  - logs aggregation                       │
+│  - active test run status                 │
+│  - worker lifecycle tracking              │
+└───────────────────────────────────────────┘
 ```
 
 # SYSTEM FLOW
@@ -509,3 +567,8 @@ Controller Machine
 7. Controller aggregates
 8. Manager exports report
 ```
+## Architecture Design Guideline: Push complexity into C++
+
+* better performance
+* more precise timing
+* closer to hardware

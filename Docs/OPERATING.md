@@ -69,6 +69,59 @@ sequenceDiagram
     AM->>AM: monitor health + restart if needed
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+
+    participant AM as App Management
+    participant M as Test Run Manager
+    participant C as Test Run Controller
+    participant W as Test Worker (Service)
+    participant D as Hardware Daemon
+    participant HW as Robot + Monitor Boards
+
+    AM->>M: start/monitor
+    AM->>C: start/monitor
+    AM->>W: start/monitor
+    AM->>D: start/monitor
+
+    M->>M: ingest TestRun (CSV/JSON)
+    M->>M: resolve firmware
+    M->>C: dispatch TestRun
+
+    C->>C: assign BoardPair
+    C->>D: flash firmware
+
+    loop per BoardPair (parallel)
+        C->>W: start worker(board_pair, config)
+
+        loop per TestSet (sequential)
+            C->>D: apply board config (ESP32 DIP switch)
+            C->>D: reboot board
+
+            C->>D: CheckDeviceReady()
+
+            loop per TestCase
+                loop per Step
+                    C->>W: ExecuteStep(step)
+
+                    W->>D: ExecuteCommand / WaitForCondition
+                    D->>HW: UART / CAN
+                    HW-->>D: response
+                    D-->>W: normalized result
+                    W-->>C: step result
+
+                    C->>C: evaluate result / retry / abort
+                end
+            end
+        end
+
+        C->>W: stop worker
+    end
+
+    C->>M: final report
+```
+
 ---
 
 ## State machine for Test Run Controller

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "test_set_id": "TS-SHUTTLE-LEADSCREW-DRIVE-ONLY",
+  "metadata": {
+    "description": "Single-testcase subset of the shuttle leadscrew suite — drive only. Use this for quick smoke tests after a firmware flash to confirm the leadscrew moves and returns home before running the full regression."
+  },
+  "board_binding": {
+    "board_type": "robot",
+    "requires_monitor": true
+  },
+  "execution_constraints": {
+    "requires_exclusive_access": true,
+    "stop_on_failure": true
+  },
+  "test_cases": [
+    {
+      "test_case_id": "TC-SH-LEADSCREW-DRIVE",
+      "order": 1
+    }
+  ]
+}

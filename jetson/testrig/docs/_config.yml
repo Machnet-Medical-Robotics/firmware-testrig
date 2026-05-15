@@ -1,0 +1,30 @@
+title: TestRig Documentation
+description: Automated PCB firmware testing system — Machnet Medical Robotics
+theme: just-the-docs
+
+url: ""
+
+# Navigation
+nav_order_default: 1
+
+# Mermaid diagrams
+mermaid:
+  version: "10.6.0"
+
+# Markdown settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+
+# Exclude non-doc files
+exclude:
+  - "*.py"
+  - "*.json"
+  - "*.csv"
+  - ".venv/"
+  - "reports/"
+
+# Plugin config for just-the-docs
+just_the_docs:
+  nav_sort: case_insensitive

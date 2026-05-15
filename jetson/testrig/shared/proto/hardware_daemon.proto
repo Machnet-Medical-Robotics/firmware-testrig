@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package hardware_daemon;
+
+// ============================================================================
+// HardwareDaemon — gRPC service contract
+//
+// This is the ONLY interface between the Test Worker Runtime (Python) and
+// the Hardware Daemon (C++ production / Python mock).
+//
+// Design rules:
+//   - Worker never talks to hardware directly. All hardware access goes
+//     through this service.
+//   - Daemon is stateless from the Worker's perspective: each RPC is
+//     self-contained. The daemon manages connection state internally.
+//   - device_id identifies which physical device to target:
+//       "monitoring_pcb" — primary target, relays to Robot PCB over CAN
+//       "robot_pcb"      — direct UART, optional double-verification only
+//   - All timeouts specified by the caller (Worker), not hardcoded in daemon.
+//     The daemon is a pure execution engine.
+//
+// Extending for new hardware (e.g. PSU, oscilloscope):
+//   1. Use new device_id string — convention only, no enum, keeps proto
+//      stable without recompilation as devices are added.
+//   2. Add new RPC only if the interaction pattern is genuinely new.
+//   3. Implement handler in mock_daemon.py and later in real C++ daemon.
+//   4. Worker step_engine.py adds a handler for any new StepType.
+// ============================================================================
+
+service HardwareDaemon {
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
+
+    // Confirm daemon is alive and connected.
+    rpc Ping (PingRequest) returns (PingResponse);
+
+    // Check if a specific device is ready to receive commands.
+    // Called by Worker after board reboot, before executing TestCases.
+    // Returns board_identity: the string the board announced on UART after
+    // boot. Controller cross-checks this against expected_board_identity.
+    rpc CheckDeviceReady (DeviceReadyRequest) returns (DeviceReadyResponse);
+
+    // -------------------------------------------------------------------------
+    // Discovery
+    // -------------------------------------------------------------------------
+
+    // Trigger the GScope UART discovery handshake with the Monitoring PCB.
+    // Returns all available channels and commands for this firmware build.
+    // Board must be ready (CheckDeviceReady passed) before calling this.
+    // Mock: returns hardcoded DiscoverResponse for the shuttle assembly.
+    rpc DiscoverCapabilities (DiscoverRequest) returns (DiscoverResponse);
+
+    // -------------------------------------------------------------------------
+    // Command execution  (maps to: StepType.CONSOLE)
+    // -------------------------------------------------------------------------
+
+    // Send a GScope command over UART, wait for response string.
+    // Daemon reads UART until return_string_match is found (PASS) or
+    // timeout_ms elapses (INFRA error). If return_string_match is empty,
+    // returns on first non-empty response.
+    rpc SendCommand (CommandRequest) returns (CommandResponse);
+
+    // -------------------------------------------------------------------------
+    // Channel monitoring  (maps to: StepType.CHANNEL_WAIT)
+    // -------------------------------------------------------------------------
+
+    // Monitor a GScope channel until value[channel_offset] is in
+    // [min_value, max_value], or timeout_ms elapses.
+    // Daemon runs the polling loop internally — Worker makes one blocking
+    // call. All UART timing stays inside the daemon.
+    rpc WaitForChannel (ChannelWaitRequest) returns (ChannelWaitResponse);
+
+    // Stream live channel telemetry (for Monitoring Service / dashboards).
+    // Not used by the Worker step engine.
+    rpc StreamTelemetry (TelemetryRequest) returns (stream TelemetryFrame);
+
+    // -------------------------------------------------------------------------
+    // Board management  (called by Controller, NOT by Worker)
+    // -------------------------------------------------------------------------
+
+    // Issue a reboot command to the Robot PCB.
+    // Returns when command is issued — does NOT wait for readiness.
+    // Follow with CheckDeviceReady to confirm board is back up.
+    rpc RebootDevice (RebootRequest) returns (RebootResponse);
+
+    // Send DIP switch config byte to the ESP32 over UART, wait for ACK.
+    // Mock: always returns CONFIG_APPLIED immediately.
+    // Real: sends byte, waits for "CONFIG_APPLIED" response string.
+    rpc ApplyBoardConfig (BoardConfigRequest) returns (BoardConfigResponse);
+}
+
+
+// ============================================================================
+// Shared
+// ============================================================================
+
+enum DeviceStatus {
+    DEVICE_STATUS_UNKNOWN   = 0;
+    DEVICE_STATUS_OK        = 1;
+    DEVICE_STATUS_ERROR     = 2;
+    DEVICE_STATUS_TIMEOUT   = 3;
+    DEVICE_STATUS_NOT_READY = 4;
+}
+
+
+// ============================================================================
+// Lifecycle
+// ============================================================================
+
+message PingRequest {}
+
+message PingResponse {
+    bool   alive          = 1;
+    string daemon_version = 2;
+}
+
+message DeviceReadyRequest {
+    string device_id  = 1;
+    int32  timeout_ms = 2;
+}
+
+message DeviceReadyResponse {
+    bool         ready          = 1;
+    DeviceStatus status         = 2;
+    string       detail         = 3;
+    string       board_identity = 4;  // e.g. "shuttle" — announced by board on boot
+}
+
+
+// ============================================================================
+// Discovery
+// ============================================================================
+
+message DiscoverRequest {
+    string device_id = 1;
+}
+
+message DiscoveredChannel {
+    string name        = 1;  // e.g. "stepper1_controller"
+    int32  num_fields  = 2;  // number of floats per sample
+    string description = 3;
+}
+
+message DiscoveredCommand {
+    string name        = 1;  // e.g. "com_leadscrew_go"
+    bool   has_params  = 2;
+    string description = 3;
+}
+
+message DiscoverResponse {
+    DeviceStatus               status       = 1;
+    string                     detail       = 2;
+    repeated DiscoveredChannel channels     = 3;
+    repeated DiscoveredCommand commands     = 4;
+    string                     raw_response = 5;  // raw UART bytes for debugging
+}
+
+
+// ============================================================================
+// Command execution
+// ============================================================================
+
+message CommandRequest {
+    string device_id           = 1;
+    string command             = 2;  // e.g. "com_leadscrew_go"
+    string command_param       = 3;  // e.g. "100 350"  (empty if none)
+    string return_string_match = 4;  // substring to find in response (empty = any)
+    int32  timeout_ms          = 5;
+}
+
+message CommandResponse {
+    DeviceStatus status          = 1;
+    bool         matched         = 2;  // true if return_string_match found
+    string       actual_response = 3;  // full UART response string
+    int32        duration_ms     = 4;
+    string       detail          = 5;
+}
+
+
+// ============================================================================
+// Channel monitoring
+// ============================================================================
+
+message ChannelWaitRequest {
+    string device_id      = 1;
+    string channel_name   = 2;  // e.g. "stepper1_controller"
+    int32  channel_offset = 3;  // index into channel float array
+    float  min_value      = 4;
+    float  max_value      = 5;
+    int32  timeout_ms     = 6;
+}
+
+message ChannelWaitResponse {
+    DeviceStatus status        = 1;
+    bool         condition_met = 2;
+    float        last_value    = 3;  // last sampled value (for failure diagnosis)
+    int32        duration_ms   = 4;
+    string       detail        = 5;
+}
+
+
+// ============================================================================
+// Telemetry streaming
+// ============================================================================
+
+message TelemetryRequest {
+    string device_id    = 1;
+    string channel_name = 2;
+}
+
+message TelemetryFrame {
+    string         channel_name = 1;
+    repeated float values       = 2;  // all field values for this sample
+    int64          timestamp_ms = 3;  // ms since daemon started
+}
+
+
+// ============================================================================
+// Board management
+// ============================================================================
+
+message RebootRequest {
+    string device_id = 1;  // "robot_pcb"
+    string method    = 2;  // "power_cycle" | "reset_pin" | "software" | "" (daemon decides)
+}
+
+message RebootResponse {
+    DeviceStatus status = 1;
+    string       detail = 2;
+}
+
+message BoardConfigRequest {
+    // ESP32 is reached via its own UART port (BoardConfig.esp32_uart_port).
+    // config_byte: full 8-bit DIP switch mask. e.g. 163 = 0xA3 = SW1,SW2,SW6,SW8 ON.
+    // Proto has no uint8 — uint32 used, upper 3 bytes always 0.
+    uint32 config_byte = 1;
+    int32  timeout_ms  = 2;
+}
+
+message BoardConfigResponse {
+    DeviceStatus status = 1;
+    string       detail = 2;  // "CONFIG_APPLIED" on success
+}

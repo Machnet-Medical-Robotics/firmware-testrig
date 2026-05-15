@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0",
+  "test_case_id": "TC-SH-LEADSCREW-ENCODER-TRACK",
+  "metadata": {
+    "test_name": "Shuttle Leadscrew Encoder Tracking",
+    "description": "Moves the leadscrew to 50mm and verifies the quadrature encoder (offset 5) agrees with the motor controller position (offset 0) within tolerance. A large disagreement between encoder and motor position indicates the encoder is disconnected, miscounted, or the motor skipped steps.",
+    "tags": ["leadscrew", "encoder", "shuttle", "position-verify"],
+    "estimated_duration_ms": 20000
+  },
+  "config": {
+    "echo_console": true
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Enter service mode so motion commands are accepted",
+      "command": "com_enter_service_mode",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 2,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Move leadscrew to 50mm at 200mm/s (mid-range, moderate speed)",
+      "command": "com_leadscrew_go",
+      "command_param": "50 200",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 3,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "Wait until motor controller reports position at 50mm setpoint",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 0,
+        "min": 49.0,
+        "max": 51.0
+      },
+      "timeout_ms": 12000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 4,
+      "type": "wait",
+      "device": "monitoring_pcb",
+      "description": "Short settle time — allow encoder to stabilise after motion stops",
+      "timeout_ms": 300
+    },
+    {
+      "step_id": 5,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "Verify encoder position (offset 5) agrees with motor position — must be within ±1mm of 50mm setpoint. Failure here means encoder is not tracking the motor correctly.",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 5,
+        "min": 49.0,
+        "max": 51.0
+      },
+      "timeout_ms": 3000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 6,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Return leadscrew to home position",
+      "command": "com_leadscrew_go",
+      "command_param": "0 200",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": false
+    },
+    {
+      "step_id": 7,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "Confirm leadscrew returned to home (0mm ±0.5mm)",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 0,
+        "min": -0.5,
+        "max": 0.5
+      },
+      "timeout_ms": 12000,
+      "stop_if_fail": false
+    }
+  ],
+  "on_fail": [
+    {
+      "command": "com_change_mode",
+      "command_param": "2"
+    }
+  ]
+}

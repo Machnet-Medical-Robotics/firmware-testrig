@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "test_case_id": "TC-SH-LEADSCREW-OVERTRAVEL",
+  "metadata": {
+    "test_name": "Shuttle Leadscrew Overtravel Check (Expected Fail)",
+    "description": "Intentionally failing test case. Moves leadscrew to 100mm then checks for a position in the 150–200mm range — physically impossible for this leadscrew (max travel 720mm but the commanded position is 100mm, so the channel will never report 150+). The channel_wait step times out and is reported as TEST_FAIL. This validates that the testrig correctly detects and reports when firmware does not reach a commanded position, and that on_fail recovery commands execute after a test failure.",
+    "tags": ["leadscrew", "shuttle", "expected-fail", "overtravel", "regression"],
+    "estimated_duration_ms": 25000
+  },
+  "config": {
+    "echo_console": true
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Enter service mode",
+      "command": "com_enter_service_mode",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 2,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Command leadscrew to 100mm — this is a valid, reachable position",
+      "command": "com_leadscrew_go",
+      "command_param": "100 350",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 3,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "Wait for position to reach 100mm setpoint before the bad check",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 0,
+        "min": 99.0,
+        "max": 101.0
+      },
+      "timeout_ms": 12000,
+      "stop_if_fail": true
+    },
+    {
+      "step_id": 4,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "INTENTIONAL FAIL: check for position in 150–200mm range. The leadscrew was commanded to 100mm and will never reach 150mm, so this step will timeout. Expected result: TEST_FAIL on this step. This confirms the testrig correctly detects when the firmware does not reach a target position.",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 0,
+        "min": 150.0,
+        "max": 200.0
+      },
+      "timeout_ms": 5000,
+      "stop_if_fail": false
+    },
+    {
+      "step_id": 5,
+      "type": "console",
+      "device": "monitoring_pcb",
+      "description": "Return to home after the failed check — stop_if_fail=false on step 4 means this still executes",
+      "command": "com_leadscrew_go",
+      "command_param": "0 350",
+      "return_string_match": "cmd OK",
+      "timeout_ms": 5000,
+      "stop_if_fail": false
+    },
+    {
+      "step_id": 6,
+      "type": "channel_wait",
+      "device": "monitoring_pcb",
+      "description": "Confirm leadscrew returned to home (0mm ±0.5mm)",
+      "channel_name": "stepper1_controller",
+      "expected": {
+        "channel_offset": 0,
+        "min": -0.5,
+        "max": 0.5
+      },
+      "timeout_ms": 12000,
+      "stop_if_fail": false
+    }
+  ],
+  "on_fail": [
+    {
+      "command": "com_change_mode",
+      "command_param": "2"
+    }
+  ]
+}

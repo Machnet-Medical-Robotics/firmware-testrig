@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "test_set_id": "TS-SHUTTLE-LEADSCREW",
+  "metadata": {
+    "description": "Shuttle leadscrew full validation suite — drive, encoder tracking, and overtravel check"
+  },
+  "board_binding": {
+    "board_type": "robot",
+    "requires_monitor": true
+  },
+  "execution_constraints": {
+    "requires_exclusive_access": true,
+    "stop_on_failure": false
+  },
+  "test_cases": [
+    {
+      "test_case_id": "TC-SH-LEADSCREW-DRIVE",
+      "order": 1
+    },
+    {
+      "test_case_id": "TC-SH-LEADSCREW-ENCODER-TRACK",
+      "order": 2
+    },
+    {
+      "test_case_id": "TC-SH-LEADSCREW-OVERTRAVEL",
+      "order": 3
+    }
+  ]
+}

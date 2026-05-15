@@ -1,0 +1,7 @@
+{
+  "board_config_id": "SH1",
+  "description": "Shuttle module - default DIP configuration. dip_switch_byte=0xA3 (163)",
+  "dip_switch_byte": 163,
+  "expected_board_identity": "shuttle",
+  "esp32_uart_port": null
+}

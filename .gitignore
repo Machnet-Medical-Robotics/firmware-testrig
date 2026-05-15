@@ -93,6 +93,8 @@ reference/
 
 # Ignore 'implementation guide' folder and everything inside
 implementation guide/
+database/
+mock-uart/
 
 # Also handle possible variations with spaces (safe pattern)
 **/reference/**
